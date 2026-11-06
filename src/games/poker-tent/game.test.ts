@@ -5,6 +5,7 @@ import {
   act,
   bestHand,
   botAction,
+  canRaise,
   createState,
   handName,
   leave,
@@ -87,5 +88,42 @@ describe('poker tent', () => {
     leave(state);
     expect(state.phase).toBe('left');
     expect(state.message).toContain(String(state.players[0].chips));
+  });
+
+  it('counts the big blind as the first of four bets before the flop', () => {
+    const state = createState(() => 0.5);
+    while (state.phase === 'betting' && canRaise(state, state.players[state.turn]))
+      act(state, 'raise');
+    expect(state.currentBet).toBe(4 * BIG_BLIND);
+  });
+
+  it("doesn't reopen the betting for a short all-in raise", () => {
+    const state = createState(() => 0.5);
+    // The turn, with seats 1 and 3 left in and seat 3 holding 25 chips.
+    Object.assign(state, { street: 2, currentBet: 0, raises: 0, fullBet: 0, turn: 1 });
+    for (const p of state.players) Object.assign(p, { bet: 0, acted: false });
+    state.players[0].folded = state.players[2].folded = true;
+    state.players[3].chips = 25;
+    act(state, 'raise');
+    act(state, 'raise');
+    expect(state.players[3].bet).toBe(25);
+    expect(state.raises).toBe(1);
+    expect(state.turn).toBe(1);
+    expect(canRaise(state, state.players[1])).toBe(false);
+  });
+
+  it('gives the odd chip of a split pot to the first winner left of the button', () => {
+    const state = createState(() => 0.5);
+    // Seats 0 and 2 tie on the board, and the pot is 55 after seats 1 and 3 fold.
+    state.board = [card(12), card(11, 1), card(10, 2), card(9, 3), card(8)];
+    state.players[0].cards = [card(0, 1), card(1, 2)];
+    state.players[2].cards = [card(0, 2), card(1, 3)];
+    state.players.forEach((p, i) => Object.assign(p, { chips: 100, inPot: [20, 5, 20, 10][i] }));
+    state.players[1].folded = state.players[3].folded = true;
+    Object.assign(state, { dealer: 0, street: 3, turn: 0, currentBet: 0 });
+    state.players[0].acted = state.players[2].acted = true;
+    act(state, 'call');
+    expect(state.players[2].chips).toBe(128);
+    expect(state.players[0].chips).toBe(127);
   });
 });

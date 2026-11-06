@@ -5,7 +5,7 @@ const { width: WIDTH, height: HEIGHT } = theme.canvas;
 export const BUY_IN = 500;
 export const SMALL_BLIND = 5;
 export const BIG_BLIND = 10;
-/** Fixed limit: at most a bet and three raises on each street. */
+/** Fixed limit: at most a bet and three raises on each street. The big blind is the pre-flop bet. */
 export const MAX_RAISES = 4;
 const BOT_DELAY = 0.7;
 const STREETS = ['Pre-flop', 'Flop', 'Turn', 'River'];
@@ -56,6 +56,8 @@ export interface PokerState {
   street: number;
   currentBet: number;
   raises: number;
+  /** The bet after the last full raise. A seat that already acted at this level may only call. */
+  fullBet: number;
   phase: 'betting' | 'handOver' | 'busted' | 'left';
   /** True when the hand went to a showdown, so the bots' cards are shown. */
   shown: boolean;
@@ -88,6 +90,7 @@ export function createState(rng: () => number = Math.random): PokerState {
     street: 0,
     currentBet: 0,
     raises: 0,
+    fullBet: 0,
     phase: 'betting',
     shown: false,
     message: '',
@@ -158,7 +161,13 @@ export function startHand(state: PokerState): void {
   state.board = [];
   state.dealer = (state.dealer + 1) % n;
   for (const p of state.players) p.cards = [deck.pop()!, deck.pop()!];
-  Object.assign(state, { street: 0, raises: 0, phase: 'betting', shown: false });
+  Object.assign(state, {
+    street: 0,
+    raises: 1,
+    fullBet: BIG_BLIND,
+    phase: 'betting',
+    shown: false,
+  });
   pay(state, (state.dealer + 1) % n, SMALL_BLIND);
   pay(state, (state.dealer + 2) % n, BIG_BLIND);
   state.currentBet = BIG_BLIND;
@@ -170,7 +179,7 @@ export function startHand(state: PokerState): void {
 export const betSize = (state: PokerState) => (state.street < 2 ? BIG_BLIND : BIG_BLIND * 2);
 export const owed = (state: PokerState, p: Player) => state.currentBet - p.bet;
 export const canRaise = (state: PokerState, p: Player) =>
-  state.raises < MAX_RAISES && p.chips > owed(state, p);
+  state.raises < MAX_RAISES && p.chips > owed(state, p) && !(p.acted && p.bet >= state.fullBet);
 
 function pay(state: PokerState, seat: number, amount: number) {
   const p = state.players[seat];
@@ -198,8 +207,12 @@ export function act(state: PokerState, action: Action): void {
   const due = owed(state, p);
   if (action === 'raise' && canRaise(state, p)) {
     pay(state, state.turn, due + betSize(state));
+    // An all-in raise of less than half a bet doesn't count as a raise or reopen the betting.
+    if ((p.bet - state.currentBet) * 2 >= betSize(state)) {
+      state.raises += 1;
+      state.fullBet = p.bet;
+    }
     state.currentBet = Math.max(state.currentBet, p.bet);
-    state.raises += 1;
     state.message = `${p.name} raises to ${p.bet}`;
   } else if (action === 'fold' && due > 0) {
     p.folded = true;
@@ -224,12 +237,18 @@ function advance(state: PokerState) {
   const cards = state.street === 1 ? 3 : 1;
   for (let i = 0; i < cards; i++) state.board.push(state.deck.pop()!);
   for (const p of state.players) Object.assign(p, { bet: 0, acted: false });
-  Object.assign(state, { currentBet: 0, raises: 0, turn: state.dealer });
+  Object.assign(state, { currentBet: 0, raises: 0, fullBet: 0, turn: state.dealer });
   nextTurn(state);
 }
 
 function endHand(state: PokerState) {
-  const live = state.players.filter((p) => !p.folded);
+  const n = state.players.length;
+  // Seats in order from the left of the button, who get any odd chips first.
+  const live = state.players
+    .map((p, seat) => ({ p, from: (seat - state.dealer - 1 + n) % n }))
+    .sort((a, b) => a.from - b.from)
+    .map(({ p }) => p)
+    .filter((p) => !p.folded);
   const pot = state.players.reduce((sum, p) => sum + p.inPot, 0);
   if (live.length === 1) {
     live[0].chips += pot;
@@ -423,9 +442,17 @@ export const pokerTent: CarnivalGame = {
 
     let state = createState();
     let scoreRecorded = false;
+    // Saves the score once, as soon as the session ends, before a restart or teardown drops it.
+    const saveScore = () => {
+      if ((state.phase === 'busted' || state.phase === 'left') && !scoreRecorded) {
+        recordScore(pokerTent.id, state.players[0].chips);
+        scoreRecorded = true;
+      }
+    };
 
     const onDown = (event: PointerEvent) => {
       if (state.phase === 'busted' || state.phase === 'left') {
+        saveScore();
         state = createState();
         scoreRecorded = false;
         return;
@@ -437,6 +464,7 @@ export const pokerTent: CarnivalGame = {
         (b) => x >= b.x && x <= b.x + BUTTON.w && y >= BUTTON.y && y <= BUTTON.y + BUTTON.h,
       );
       hit?.run(state);
+      saveScore();
     };
     canvas.addEventListener('pointerdown', onDown);
 
@@ -451,11 +479,8 @@ export const pokerTent: CarnivalGame = {
         if (wait >= BOT_DELAY) {
           wait = 0;
           act(state, botAction(state));
+          saveScore();
         }
-      }
-      if ((state.phase === 'busted' || state.phase === 'left') && !scoreRecorded) {
-        recordScore(pokerTent.id, state.players[0].chips);
-        scoreRecorded = true;
       }
       draw(ctx, state);
       frame = requestAnimationFrame(loop);
@@ -463,6 +488,7 @@ export const pokerTent: CarnivalGame = {
     frame = requestAnimationFrame(loop);
 
     return () => {
+      saveScore();
       cancelAnimationFrame(frame);
       canvas.removeEventListener('pointerdown', onDown);
     };
