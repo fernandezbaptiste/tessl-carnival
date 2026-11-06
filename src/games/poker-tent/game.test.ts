@@ -100,7 +100,7 @@ describe('poker tent', () => {
   it("doesn't reopen the betting for a short all-in raise", () => {
     const state = createState(() => 0.5);
     // The turn, with seats 1 and 3 left in and seat 3 holding 25 chips.
-    Object.assign(state, { street: 2, currentBet: 0, raises: 0, fullBet: 0, turn: 1 });
+    Object.assign(state, { street: 2, currentBet: 0, raises: 0, turn: 1 });
     for (const p of state.players) Object.assign(p, { bet: 0, acted: false });
     state.players[0].folded = state.players[2].folded = true;
     state.players[3].chips = 25;
@@ -110,6 +110,23 @@ describe('poker tent', () => {
     expect(state.raises).toBe(1);
     expect(state.turn).toBe(1);
     expect(canRaise(state, state.players[1])).toBe(false);
+  });
+
+  it('reopens the betting when short all-ins add up to half a bet', () => {
+    const state = createState(() => 0.5);
+    // The turn, with seats 1 and 2 holding 25 and 30 chips.
+    Object.assign(state, { street: 2, currentBet: 0, raises: 0, turn: 0 });
+    for (const p of state.players) Object.assign(p, { bet: 0, acted: false, chips: 100 });
+    state.players[1].chips = 25;
+    state.players[2].chips = 30;
+    act(state, 'raise');
+    act(state, 'raise');
+    act(state, 'raise');
+    act(state, 'call');
+    expect(state.players.map((p) => p.bet)).toEqual([20, 25, 30, 30]);
+    expect(state.raises).toBe(1);
+    expect(state.turn).toBe(0);
+    expect(canRaise(state, state.players[0])).toBe(true);
   });
 
   it('gives the odd chip of a split pot to the first winner left of the button', () => {

@@ -55,9 +55,8 @@ export interface PokerState {
   turn: number;
   street: number;
   currentBet: number;
+  /** Full bets and raises this street. A short all-in raise doesn't count. */
   raises: number;
-  /** The bet after the last full raise. A seat that already acted at this level may only call. */
-  fullBet: number;
   phase: 'betting' | 'handOver' | 'busted' | 'left';
   /** True when the hand went to a showdown, so the bots' cards are shown. */
   shown: boolean;
@@ -90,7 +89,6 @@ export function createState(rng: () => number = Math.random): PokerState {
     street: 0,
     currentBet: 0,
     raises: 0,
-    fullBet: 0,
     phase: 'betting',
     shown: false,
     message: '',
@@ -164,7 +162,6 @@ export function startHand(state: PokerState): void {
   Object.assign(state, {
     street: 0,
     raises: 1,
-    fullBet: BIG_BLIND,
     phase: 'betting',
     shown: false,
   });
@@ -178,8 +175,12 @@ export function startHand(state: PokerState): void {
 
 export const betSize = (state: PokerState) => (state.street < 2 ? BIG_BLIND : BIG_BLIND * 2);
 export const owed = (state: PokerState, p: Player) => state.currentBet - p.bet;
+// A seat that already acted owes what the bet went up since then. It may raise again only when
+// that adds up to at least half a bet, so one short all-in doesn't reopen the betting but several can.
 export const canRaise = (state: PokerState, p: Player) =>
-  state.raises < MAX_RAISES && p.chips > owed(state, p) && !(p.acted && p.bet >= state.fullBet);
+  state.raises < MAX_RAISES &&
+  p.chips > owed(state, p) &&
+  !(p.acted && owed(state, p) * 2 < betSize(state));
 
 function pay(state: PokerState, seat: number, amount: number) {
   const p = state.players[seat];
@@ -207,11 +208,8 @@ export function act(state: PokerState, action: Action): void {
   const due = owed(state, p);
   if (action === 'raise' && canRaise(state, p)) {
     pay(state, state.turn, due + betSize(state));
-    // An all-in raise of less than half a bet doesn't count as a raise or reopen the betting.
-    if ((p.bet - state.currentBet) * 2 >= betSize(state)) {
-      state.raises += 1;
-      state.fullBet = p.bet;
-    }
+    // An all-in raise of less than half a bet doesn't count toward the cap.
+    if ((p.bet - state.currentBet) * 2 >= betSize(state)) state.raises += 1;
     state.currentBet = Math.max(state.currentBet, p.bet);
     state.message = `${p.name} raises to ${p.bet}`;
   } else if (action === 'fold' && due > 0) {
@@ -237,7 +235,7 @@ function advance(state: PokerState) {
   const cards = state.street === 1 ? 3 : 1;
   for (let i = 0; i < cards; i++) state.board.push(state.deck.pop()!);
   for (const p of state.players) Object.assign(p, { bet: 0, acted: false });
-  Object.assign(state, { currentBet: 0, raises: 0, fullBet: 0, turn: state.dealer });
+  Object.assign(state, { currentBet: 0, raises: 0, turn: state.dealer });
   nextTurn(state);
 }
 

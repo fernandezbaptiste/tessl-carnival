@@ -12,7 +12,8 @@ A Texas hold'em cash game against three bots: Tight Tina, Loose Lou and Wild Bil
 - Betting is fixed limit to keep it simple: a bet or raise is 10 before the turn
   and 20 on the turn and river, with at most four bets a street. Before the flop
   the big blind counts as the first bet. An all-in raise of less than half a bet
-  doesn't count as a raise, and players who already acted can only call it.
+  doesn't count as a raise, and players who already acted can only call it,
+  unless short all-ins together raise the bet they face by half a bet or more.
 - In a split pot, an odd chip goes to the first winner to the left of the button.
 - When it's your turn, click **Fold**, **Check** or **Call**, or **Raise**. Click
   **Deal** for the next hand.
