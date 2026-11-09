@@ -5,7 +5,7 @@ const { width: WIDTH, height: HEIGHT } = theme.canvas;
 export const BUY_IN = 500;
 export const SMALL_BLIND = 5;
 export const BIG_BLIND = 10;
-/** Fixed limit: at most a bet and three raises on each street. The big blind is the pre-flop bet. */
+/** At most a bet and three raises on each street. The big blind is the pre-flop bet. */
 export const MAX_RAISES = 4;
 const BOT_DELAY = 0.7;
 const STREETS = ['Pre-flop', 'Flop', 'Turn', 'River'];
@@ -57,6 +57,8 @@ export interface PokerState {
   currentBet: number;
   /** Full bets and raises this street. A short all-in raise doesn't count. */
   raises: number;
+  /** How much your next raise adds on top of a call, picked in steps of one bet. */
+  raiseBy: number;
   phase: 'betting' | 'handOver' | 'busted' | 'left';
   /** True when the hand went to a showdown, so the bots' cards are shown. */
   shown: boolean;
@@ -89,6 +91,7 @@ export function createState(rng: () => number = Math.random): PokerState {
     street: 0,
     currentBet: 0,
     raises: 0,
+    raiseBy: BIG_BLIND,
     phase: 'betting',
     shown: false,
     message: '',
@@ -162,6 +165,7 @@ export function startHand(state: PokerState): void {
   Object.assign(state, {
     street: 0,
     raises: 1,
+    raiseBy: BIG_BLIND,
     phase: 'betting',
     shown: false,
   });
@@ -181,6 +185,18 @@ export const canRaise = (state: PokerState, p: Player) =>
   state.raises < MAX_RAISES &&
   p.chips > owed(state, p) &&
   !(p.acted && owed(state, p) * 2 < betSize(state));
+/** The most a seat can raise by: everything it has left after calling, and never less than a bet. */
+export const maxRaise = (state: PokerState, p: Player) =>
+  Math.max(betSize(state), p.chips - owed(state, p));
+/** Your raise, kept between one bet and all in. */
+export const yourRaise = (state: PokerState) =>
+  Math.min(Math.max(state.raiseBy, betSize(state)), maxRaise(state, state.players[0]));
+
+/** Makes your next raise bigger or smaller by whole bets, up to all in. */
+export function changeRaise(state: PokerState, bets: number): void {
+  const raiseBy = yourRaise(state) + bets * betSize(state);
+  state.raiseBy = Math.min(Math.max(raiseBy, betSize(state)), maxRaise(state, state.players[0]));
+}
 
 function pay(state: PokerState, seat: number, amount: number) {
   const p = state.players[seat];
@@ -201,13 +217,17 @@ function nextTurn(state: PokerState) {
   }
 }
 
-/** The player whose turn it is folds, checks or calls, or raises. A free fold is a check. */
-export function act(state: PokerState, action: Action): void {
+/**
+ * The player whose turn it is folds, checks or calls, or raises. A free fold is a check.
+ * A raise adds `raiseBy` on top of the call, at least one bet, and goes all in when that's more
+ * than the player has.
+ */
+export function act(state: PokerState, action: Action, raiseBy = betSize(state)): void {
   if (state.phase !== 'betting') return;
   const p = state.players[state.turn];
   const due = owed(state, p);
   if (action === 'raise' && canRaise(state, p)) {
-    pay(state, state.turn, due + betSize(state));
+    pay(state, state.turn, due + Math.max(raiseBy, betSize(state)));
     // An all-in raise of less than half a bet doesn't count toward the cap.
     if ((p.bet - state.currentBet) * 2 >= betSize(state)) state.raises += 1;
     state.currentBet = Math.max(state.currentBet, p.bet);
@@ -235,7 +255,7 @@ function advance(state: PokerState) {
   const cards = state.street === 1 ? 3 : 1;
   for (let i = 0; i < cards; i++) state.board.push(state.deck.pop()!);
   for (const p of state.players) Object.assign(p, { bet: 0, acted: false });
-  Object.assign(state, { currentBet: 0, raises: 0, turn: state.dealer });
+  Object.assign(state, { currentBet: 0, raises: 0, raiseBy: betSize(state), turn: state.dealer });
   nextTurn(state);
 }
 
@@ -319,6 +339,7 @@ const yourTurn = (state: PokerState) => state.phase === 'betting' && state.turn 
 interface Button {
   label: string;
   x: number;
+  w?: number;
   run: (state: PokerState) => void;
 }
 
@@ -328,11 +349,15 @@ function buttons(state: PokerState): Button[] {
   if (state.phase === 'handOver') list.push({ label: 'Deal', x: 640, run: startHand });
   if (yourTurn(state)) {
     const due = owed(state, you);
-    if (due > 0) list.push({ label: 'Fold', x: 400, run: (s) => act(s, 'fold') });
+    if (due > 0) list.push({ label: 'Fold', x: 260, run: (s) => act(s, 'fold') });
     const call = due > 0 ? `Call ${Math.min(due, you.chips)}` : 'Check';
-    list.push({ label: call, x: 520, run: (s) => act(s, 'call') });
+    list.push({ label: call, x: 380, run: (s) => act(s, 'call') });
     if (canRaise(state, you)) {
-      list.push({ label: `Raise ${betSize(state)}`, x: 640, run: (s) => act(s, 'raise') });
+      const raiseBy = yourRaise(state);
+      const raise = raiseBy >= you.chips - due ? `All in ${you.chips}` : `Raise ${raiseBy}`;
+      list.push({ label: '-', x: 500, w: 40, run: (s) => changeRaise(s, -1) });
+      list.push({ label: raise, x: 548, w: 150, run: (s) => act(s, 'raise', raiseBy) });
+      list.push({ label: '+', x: 706, w: 40, run: (s) => changeRaise(s, 1) });
     }
   }
   return list;
@@ -403,12 +428,13 @@ function draw(ctx: CanvasRenderingContext2D, state: PokerState) {
   for (const b of buttons(state)) {
     ctx.fillStyle = b.label === 'Leave' ? colors.danger : colors.accent;
     ctx.beginPath();
-    ctx.roundRect(b.x, BUTTON.y, BUTTON.w, BUTTON.h, theme.radius);
+    const w = b.w ?? BUTTON.w;
+    ctx.roundRect(b.x, BUTTON.y, w, BUTTON.h, theme.radius);
     ctx.fill();
     ctx.fillStyle = colors.background;
     ctx.font = canvasFont('body', 'bold');
     ctx.textAlign = 'center';
-    ctx.fillText(b.label, b.x + BUTTON.w / 2, BUTTON.y + 24);
+    ctx.fillText(b.label, b.x + w / 2, BUTTON.y + 24);
   }
 
   if (state.phase === 'busted' || state.phase === 'left') {
@@ -459,7 +485,8 @@ export const pokerTent: CarnivalGame = {
       const x = ((event.clientX - rect.left) / rect.width) * WIDTH;
       const y = ((event.clientY - rect.top) / rect.height) * HEIGHT;
       const hit = buttons(state).find(
-        (b) => x >= b.x && x <= b.x + BUTTON.w && y >= BUTTON.y && y <= BUTTON.y + BUTTON.h,
+        (b) =>
+          x >= b.x && x <= b.x + (b.w ?? BUTTON.w) && y >= BUTTON.y && y <= BUTTON.y + BUTTON.h,
       );
       hit?.run(state);
       saveScore();

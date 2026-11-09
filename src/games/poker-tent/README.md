@@ -9,14 +9,18 @@ A Texas hold'em cash game against three bots: Tight Tina, Loose Lou and Wild Bil
 - The usual hold'em rules apply: two cards each, then the flop, the turn and the
   river, with a round of betting before each and after the river. The best five
   of your seven cards wins the pot, and all-in players win side pots in the usual way.
-- Betting is fixed limit to keep it simple: a bet or raise is 10 before the turn
-  and 20 on the turn and river, with at most four bets a street. Before the flop
-  the big blind counts as the first bet. An all-in raise of less than half a bet
+- A bet is 10 before the turn and 20 on the turn and river, and a raise adds at
+  least one bet on top of the call. You can raise by more: any whole number of
+  bets, up to all in. The bots always raise by one bet. There are at most four
+  bets a street, however big each one is. Before the flop the big blind counts
+  as the first bet. An all-in raise of less than half a bet
   doesn't count as a raise, and players who already acted can only call it,
   unless short all-ins together raise the bet they face by half a bet or more.
 - In a split pot, an odd chip goes to the first winner to the left of the button.
 - When it's your turn, click **Fold**, **Check** or **Call**, or **Raise**. Click
-  **Deal** for the next hand.
+  **+** and **-** beside **Raise** to raise by a bet more or less; when your raise
+  would use all your chips, the button says **All in**. Your raise goes back to
+  one bet each street. Click **Deal** for the next hand.
 - It's a cash game: click **Leave** whenever you want to cash out. Chips you have
   already put in the current pot stay there. A bot that goes broke is replaced by
   a fresh bot with 500 chips.
@@ -30,6 +34,6 @@ the session ends.
 
 ## Files
 
-- `game.ts`: the game logic (`createState`, `startHand`, `act`, `botAction`,
-  `bestHand`, `leave`) and the `pokerTent` entry, the default export the midway finds.
+- `game.ts`: the game logic (`createState`, `startHand`, `act`, `changeRaise`,
+  `botAction`, `bestHand`, `leave`) and the `pokerTent` entry, the default export the midway finds.
 - `game.test.ts`: tests for the game logic.
