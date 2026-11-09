@@ -6,10 +6,12 @@ import {
   bestHand,
   botAction,
   canRaise,
+  changeRaise,
   createState,
   handName,
   leave,
   startHand,
+  yourRaise,
 } from './game';
 
 // Cards are rank + 13 * suit, with rank 0 a two and rank 12 an ace.
@@ -142,5 +144,56 @@ describe('poker tent', () => {
     act(state, 'call');
     expect(state.players[2].chips).toBe(128);
     expect(state.players[0].chips).toBe(127);
+  });
+
+  it('lets you raise by more than one bet, and counts it as one raise', () => {
+    const state = createState(() => 0.5);
+    // You're on the button: Wild Bill calls the big blind of 10, then it's your turn.
+    act(state, 'call');
+    expect(state.turn).toBe(0);
+    act(state, 'raise', 5 * BIG_BLIND);
+    expect(state.players[0].bet).toBe(60);
+    expect(state.currentBet).toBe(60);
+    expect(state.raises).toBe(2);
+    expect(state.message).toContain('to 60');
+    expect(totalChips(state)).toBe(4 * BUY_IN);
+  });
+
+  it('never raises by less than one bet', () => {
+    const state = createState(() => 0.5);
+    act(state, 'raise', 1);
+    expect(state.currentBet).toBe(2 * BIG_BLIND);
+  });
+
+  it('goes all in when the raise is more than you have', () => {
+    const state = createState(() => 0.5);
+    act(state, 'call');
+    act(state, 'raise', 10 * BUY_IN);
+    expect(state.players[0].chips).toBe(0);
+    expect(state.currentBet).toBe(BUY_IN);
+  });
+
+  it('steps your raise up and down by whole bets, between one bet and all in', () => {
+    const state = createState(() => 0.5);
+    expect(yourRaise(state)).toBe(BIG_BLIND);
+    changeRaise(state, -1);
+    expect(yourRaise(state)).toBe(BIG_BLIND);
+    changeRaise(state, 1);
+    changeRaise(state, 1);
+    expect(yourRaise(state)).toBe(3 * BIG_BLIND);
+    changeRaise(state, 100);
+    // You have 500 and owe 10 to call, so 490 more is all in.
+    expect(yourRaise(state)).toBe(BUY_IN - BIG_BLIND);
+    act(state, 'call');
+    act(state, 'raise', yourRaise(state));
+    expect(state.players[0].chips).toBe(0);
+  });
+
+  it('starts your raise at one bet again on each new street', () => {
+    const state = createState(() => 0.5);
+    changeRaise(state, 3);
+    while (state.phase === 'betting' && state.street === 0) act(state, 'call');
+    expect(state.street).toBe(1);
+    expect(yourRaise(state)).toBe(BIG_BLIND);
   });
 });
